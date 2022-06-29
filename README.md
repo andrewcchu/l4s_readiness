@@ -8,7 +8,13 @@
 
 ### Dependencies
 
-Only dependency is [scapy](https://scapy.net/). Install with `pip3 install -r REQUIREMENTS.txt`.
+#### Packages
+Install with `pip3 install -r REQUIREMENTS.txt`.
+* [scapy](https://scapy.net/)
+
+#### Non-package Dependencies
+Follow the instructions here for your respsective OS.
+* [graphviz](https://graphviz.org/download/)
 
 ### Usage
 
