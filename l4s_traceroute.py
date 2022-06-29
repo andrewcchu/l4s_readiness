@@ -11,15 +11,19 @@ from scapy.layers.inet6 import IPv6, ICMPv6TimeExceeded
 def node_colgen(bleach_tuple):
   total = bleach_tuple[0]
   preserve = bleach_tuple[1]
-  default_col = "#32CD32"
-  step_size = 75 # TODO: Play around with code; Need to calculate per total -- otherwise gradient will be static ; non-proportional (node w/ many connections may show up as very white while node w/ few connections show up as green or vice versa)
-  offset = total - preserve
+  step_size = total # TODO: Play around with code; Need to calculate per total -- otherwise gradient will be static ; non-proportional (node w/ many connections may show up as very white while node w/ few connections show up as green or vice versa)
+  if preserve == 0:
+    default_col = "#FFFFFF"
+    offset = 0
+  else:
+    default_col = "#14A045"
+    offset = total - preserve
   rgb_hex = [default_col[x:x+2] for x in [1, 3, 5]]
-  new_rgb_int = [int(hex_value, 16) + (offset * step_size) for hex_value in rgb_hex]
+  new_rgb_int = [int(hex_value, 16) + (offset * step_size * 2) for hex_value in rgb_hex]
   new_rgb_int = [min([255, max([0, i])]) for i in new_rgb_int]
   return '#%02x%02x%02x' % tuple(new_rgb_int)
 
-def graph(tr_res, mark_dict):
+def mod_graph(tr_res, mark_dict):
   ASres = conf.AS_resolver
   padding = 0
   ips = {}
@@ -68,6 +72,7 @@ def graph(tr_res, mark_dict):
   bhip = {}
   for rtk in rt:
     trace = rt[rtk]
+    flag = 0
     max_trace = max(trace)
     for n in range(min(trace), max_trace):
       if n not in trace:
@@ -117,6 +122,7 @@ def graph(tr_res, mark_dict):
   s += "\n\tnode [shape=ellipse,color=black,style=solid];\n\n"
 
   s += "\n#ASN clustering\n"
+
   for asn in ASNs:
     s += '\tsubgraph cluster_%s {\n' % asn
     col = next(backcolorlist)
@@ -126,17 +132,20 @@ def graph(tr_res, mark_dict):
     s += '\t\tfontsize=10;'
     s += '\t\tlabel = "%s\\n[%s]";\n' % (asn, ASDs[asn])
     for ip in ASNs[asn]:
-      n_col = node_colgen(mark_dict[ip])
-      s += '\t\tnode[fillcolor="%s"] "%s";\n' % (n_col, ip)
+      if bool([s for s in blackholes if ip in s]) and ip not in mark_dict:
+        s += '\t\tnode[fillcolor=red] "%s";\n' % ip
+      else:
+        n_col = node_colgen(mark_dict[ip])
+        s += '\t\tnode[fillcolor="%s"] "%s";\n' % (n_col, ip)
     s += "\t}\n"
 
   s += "#endpoints\n"
   for p in ports:
-    s += '\t"%s" [shape=record,color=black,fillcolor=green,style=filled,label="%s|%s"];\n' % (p, p, "|".join(ports[p]))  # noqa: E501
+    s += '\t"%s" [shape=record,color=black,style=filled,label="%s|%s"];\n' % (p, p, "|".join(ports[p]))  # noqa: E501
 
   s += "\n#Blackholes\n"
   for bh in blackholes:
-    s += '\t%s [shape=octagon,color=black,fillcolor=red,style=filled];\n' % bh  # noqa: E501
+    s += '\t%s [shape=octagon,color=black,style=filled];\n' % bh  # noqa: E501
 
   if padding:
     s += "\n#Padding\n"
@@ -149,7 +158,7 @@ def graph(tr_res, mark_dict):
     for rcv in pad:
       s += '\t"%s" [shape=triangle,color=black,fillcolor=red,style=filled];\n' % rcv  # noqa: E501
 
-  s += "\n\tnode [shape=ellipse,color=black,style=solid];\n\n"
+  s += "\n\tnode [shape=ellipse,color=black,style=filled,fillcolor=gray75];\n\n"
 
   for rtk in rt:
     s += "#---[%s\n" % repr(rtk)
@@ -164,7 +173,82 @@ def graph(tr_res, mark_dict):
 
   return s
 
-def traceroute(target, dport=80, minttl=1, maxttl=30, sport=RandShort(), l4=None, filter=None, timeout=2, verbose=None, **kargs):  # noqa: E501
+def ecn_check(answers):
+  mark_dict = {}
+  supported = []
+  count = 0
+  for hop in answers:
+    request = hop.query
+    response = hop.answer # Class IP
+    response_payload = response.payload
+    try:
+      host = socket.gethostbyaddr(response.src)[0]
+    except:
+      host = response.src
+    # Check if router bleached ECN bits, and update times this router has been pinged/bleach count
+      # [num. times pinged, num. preservations of ecn bits]
+    if type(response_payload) != TCP:
+      if response.src in mark_dict:
+        mark_dict[response.src][0] += 1
+        mark_dict[response.src][1] += 0
+      else:
+        mark_dict[response.src] = [1, 0]
+      print("{}\t{} ({}) {} ms, tos={}, ecn={}".format(count, host, response.src, '%.3f'%((response.time - request.sent_time)*1000), str(f"{response.tos:b}"), str(f"{response.tos & 0x3:b}")))
+    # Is TCP packet, check if flags and IP fields are set:
+    else:
+      # If not bleached
+      if response_payload.flags == "SAE" or response_payload.flags == "SAC" or response_payload.flags == "SAEC":
+        if response.src in mark_dict:
+          mark_dict[response.src][0] += 1
+          mark_dict[response.src][1] += 1
+        else:
+          mark_dict[response.src] = [1, 1]
+        supported.append((host, response.src))
+      else:
+        if response.src in mark_dict:
+          mark_dict[response.src][0] += 1
+          mark_dict[response.src][1] += 0
+        else:
+          mark_dict[response.src] = [1, 0]
+      print("{}\t{} ({}) {} ms, tos={}, ecn={}, tcp_flags={}".format(count, host, response.src, '%.3f'%((response.time - request.sent_time)*1000), str(f"{response.tos:b}"), str(f"{response.tos & 0x3:b}"), str(response_payload.flags)))
+    count += 1
+
+  return mark_dict, supported
+
+def l4s_check(answers):
+  # As per spec, "The identifier for packets using the Low Latency, Low Loss, Scalable throughput (L4S) service SHOULD be visible at the IP layer;"
+  mark_dict = {}
+  supported = []
+  count = 0
+  for hop in answers:
+    request = hop.query
+    response = hop.answer # Class IP
+    response_payload = response.payload
+    try:
+      host = socket.gethostbyaddr(response.src)[0]
+    except:
+      host = response.src
+    # Check if router bleached ECN bits, and update times this router has been pinged/bleach count
+      # [num. times pinged, num. preservations of ecn bits]
+    if response.tos & 0x3 == 2 or response.tos & 0x3 == 3:
+      if response.src in mark_dict:
+        mark_dict[response.src][0] += 1
+        mark_dict[response.src][1] += 1
+      else:
+        mark_dict[response.src] = [1, 1]
+      supported.append((host, response.src))
+    else:
+      if response.src in mark_dict:
+        mark_dict[response.src][0] += 1
+        mark_dict[response.src][1] += 0
+      else:
+        mark_dict[response.src] = [1, 0]
+    print("{}\t{} ({}) {} ms, tos={}, ecn={}, tcp_flags={}".format(count, host, response.src, '%.3f'%((response.time - request.sent_time)*1000), str(f"{response.tos:b}"), str(f"{response.tos & 0x3:b}"), str(response_payload.flags)))
+    count += 1
+
+  return mark_dict, supported
+
+def traceroute(target, dport=80, minttl=1, maxttl=30, sport=RandShort(), l4=None, filter=None, timeout=2, verbose=None, ecn=0, l4s=0, **kargs):  # noqa: E501
   """Instant TCP traceroute
      :param target:  hostnames or IP addresses
      :param dport:   TCP destination port (default is 80)
@@ -176,11 +260,23 @@ def traceroute(target, dport=80, minttl=1, maxttl=30, sport=RandShort(), l4=None
      :param timeout: time to wait for answers (default is 2s)
      :param verbose: detailed output
      :return: an TracerouteResult, and a list of unanswered packets"""
-  mark_dict = {}
+
+  domains = []
   if isinstance(target, str):
-    print("traceroute to {} ({}), maxttl {} seconds".format(target, socket.gethostbyname(target), maxttl))
+    print("traceroute to {} ({}), maxttl {}".format(target, socket.gethostbyname(target), maxttl))
+    domains.append(target)
   else:
-    print("traceroute to {} ({}), maxttl {} seconds".format(", ".join(target), ", ".join(socket.gethostbyname(t) for t in target), maxttl))
+    addrs = []
+    for t in target:
+      try:
+        addr = socket.gethostbyname(t)
+      except:
+        print("\nCould not resolve {}, skipping...\n".fomat(t))
+        continue
+      domains.append(t)
+      addrs.append(addr)
+    # print("traceroute to {} ({}), maxttl {} seconds".format(", ".join(target), ", ".join(socket.gethostbyname(t) for t in target), maxttl))
+    print("traceroute to {} ({}), maxttl {}".format(", ".join(domains), ", ".join(addrs), maxttl))
 
   if verbose is None:
     verbose = conf.verb
@@ -191,7 +287,7 @@ def traceroute(target, dport=80, minttl=1, maxttl=30, sport=RandShort(), l4=None
     filter = "(icmp and (icmp[0]=3 or icmp[0]=4 or icmp[0]=5 or icmp[0]=11 or icmp[0]=12)) or (tcp and (tcp[13] & 0x16 > 0x10))"  # noqa: E501
   if l4 is None:
     # set tos=2 to represent a sender that wishes a packet to receive L4S treatment (https://datatracker.ietf.org/doc/html/draft-ietf-tsvwg-ecn-l4s-id#section-4.1)
-    a, b = sr(IP(dst=target, id=RandShort(), ttl=(minttl, maxttl), tos=2) / TCP(seq=RandInt(), sport=sport, dport=dport),  # noqa: E501
+    a, b = sr(IP(dst=target, id=RandShort(), ttl=(minttl, maxttl), tos=2) / TCP(seq=RandInt(), sport=sport, dport=dport, flags='SEC'),  # noqa: E501
           timeout=timeout, filter=filter, verbose=verbose, **kargs)
   else:
     # this should always work
@@ -199,43 +295,25 @@ def traceroute(target, dport=80, minttl=1, maxttl=30, sport=RandShort(), l4=None
     a, b = sr(IP(dst=target, id=RandShort(), ttl=(minttl, maxttl), tos=2) / l4,
           timeout=timeout, filter=filter, verbose=verbose, **kargs)
 
-  # a is SndRcvList, containing query/response packet tuples
-  count = 0
-  for hop in a:
-    request = hop[0]
-    response = hop[1] # Class IP
-    try:
-      host = socket.gethostbyaddr(response.src)[0]
-    except:
-      host = response.src
-    # Check if router bleached ECN bits, and update times this router has been pinged/bleach count
-      # (num. times pinged, num. preservations of ecn bits)
-    # If bleached
-    if response.tos & 0x3 != 2 or response.tos & 0x3 != 3:
-      if response.src in mark_dict:
-        mark_dict[response.src][0] += 1
-      else:
-        mark_dict[response.src] = [1, 0]
-    # If not bleached
-    else:
-      if response.src in mark_dict:
-        mark_dict[response.src][0] += 1
-        mark_dict[response.src][1] += 1
-      else:
-        mark_dict[response.src] = [1, 1]
-
-    print("{}\t{} ({}) {} ms, tos={}, ecn={}".format(count, host, response.src, '%.3f'%((response.time - request.sent_time)*1000), str(f"{response.tos:b}"), str(f"{response.tos & 0x3:b}")))
-    count += 1
+  if l4s:
+    mark_dict, supported = l4s_check(a)
+  elif ecn:
+    mark_dict, supported = ecn_check(a)
 
   a = TracerouteResult(a.res)
   if verbose:
-    a.show()
-  return a, b, mark_dict
+      a.show()
+  return a, b, mark_dict, list(set(supported))
 
 def main():
-  res, unans, mark_dict = traceroute(["google.com", "youtube.com"], verbose=0) #: verbosity, from 0 (almost mute) to 3 (verbose)
-  s = graph(res, mark_dict)
-  do_graph(s, target="> /tmp/graph.svg")
-  # res.graph(target="> /tmp/graph.svg")
+  sites =  ["live.com" ,"taobao.com" ,"msn.com" ,"sina.com.cn" ,"yahoo.co.jp" ,"google.co.jp" ,"linkedin.com" ,"weibo.com" ,"bing.com" ,"yandex.ru" ,"vk.com"]
+  # sites = "yandex.ru"
+  res, unans, mark_dict, supported = traceroute(sites,dport=80,maxttl=20,retry=-2,verbose=0, ecn=1) #: verbosity, from 0 (almost mute) to 3 (verbose)
+  s = mod_graph(res, mark_dict)
+  do_graph(s, target="> /Users/andrewcchu/Documents/GitHub/l4s/figs/graph_multi_ecn.svg")
+
+  print("\nHosts supporting ECN: ")
+  for s in supported:
+    print("{} ({}): {}/{} responses containing ECN flags".format(s[0], s[1], mark_dict[s[1]][1], mark_dict[s[1]][0]))
 
 main()
