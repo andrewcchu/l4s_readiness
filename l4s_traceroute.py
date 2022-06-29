@@ -320,7 +320,7 @@ def accEcn_tcp_check(answers):
 
   return mark_dict, supported
 
-def traceroute(target, dport=80, minttl=1, maxttl=30, sport=RandShort(), l4=None, filter=None, timeout=2, verbose=None, ecn=0, l4s=0, accEcn=0, **kargs):  # noqa: E501
+def traceroute(target, dport=80, minttl=1, maxttl=30, sport=RandShort(), l4=None, filter=None, timeout=2, verbose=None, ecn_tcp=0, ecn_ip=0, accEcn=0, **kargs):  # noqa: E501
   """Driver for above tailored traceroutes
      Instant TCP traceroute
      :param target:  hostnames or IP addresses
@@ -371,9 +371,9 @@ def traceroute(target, dport=80, minttl=1, maxttl=30, sport=RandShort(), l4=None
     a, b = sr(IP(dst=target, id=RandShort(), ttl=(minttl, maxttl), tos=2) / l4,
           timeout=timeout, filter=filter, verbose=verbose, **kargs)
 
-  if l4s:
+  if ecn_ip:
     mark_dict, supported = ecn_ip_check(a)
-  elif ecn:
+  elif ecn_tcp:
     mark_dict, supported = ecn_tcp_check(a)
   elif accEcn:
     mark_dict, supported = accEcn_tcp_check(a)
@@ -386,8 +386,10 @@ def traceroute(target, dport=80, minttl=1, maxttl=30, sport=RandShort(), l4=None
 def main():
   sites =  ["live.com" ,"taobao.com" ,"msn.com" ,"sina.com.cn" ,"yahoo.co.jp" ,"google.co.jp" ,"linkedin.com" ,"weibo.com" ,"bing.com" ,"yandex.ru" ,"vk.com"]
   # sites = "yandex.ru"
-  res, unans, mark_dict, supported = traceroute(sites,dport=80,maxttl=20,retry=-2,verbose=0,accEcn=1) #: verbosity, from 0 (almost mute) to 3 (verbose)
+  # Change last arg to ecn_tcp, ecn_ip, or accEcn
+  res, unans, mark_dict, supported = traceroute(sites,dport=80,maxttl=20,retry=-2,verbose=0,ecn_tcp=1) #: verbosity, from 0 (almost mute) to 3 (verbose)
   s = mod_graph(res, mark_dict)
+  # Change this path to save location
   do_graph(s, target="> /Users/andrewcchu/Documents/GitHub/l4s/figs/graph_multi_ecn.svg")
 
   print("\nHosts supporting ECN: ")
