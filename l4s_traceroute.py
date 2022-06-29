@@ -9,9 +9,16 @@ from scapy.layers.inet import TracerouteResult, IP, TCP, ICMP
 from scapy.layers.inet6 import IPv6, ICMPv6TimeExceeded
 
 def node_colgen(bleach_tuple):
+    """Generate lighter shades of
+    green for nodes based on num.
+    of affirmative responses
+    returned for respective
+    check (i.e., ecn_ip, ecn_tcp,
+    l4s_tcp)
+    """
   total = bleach_tuple[0]
   preserve = bleach_tuple[1]
-  step_size = total # TODO: Play around with code; Need to calculate per total -- otherwise gradient will be static ; non-proportional (node w/ many connections may show up as very white while node w/ few connections show up as green or vice versa)
+  step_size = total
   if preserve == 0:
     default_col = "#FFFFFF"
     offset = 0
@@ -24,6 +31,9 @@ def node_colgen(bleach_tuple):
   return '#%02x%02x%02x' % tuple(new_rgb_int)
 
 def mod_graph(tr_res, mark_dict):
+    """ Graph traceroute
+    using graphviz
+    """
   ASres = conf.AS_resolver
   padding = 0
   ips = {}
@@ -173,7 +183,13 @@ def mod_graph(tr_res, mark_dict):
 
   return s
 
-def ecn_check(answers):
+def ecn_tcp_check(answers):
+    """Performs traceroute
+    but also sets TCP flags
+    in ping s.t. hosts
+    should return back
+    ECN readiness
+    """
   mark_dict = {}
   supported = []
   count = 0
@@ -215,8 +231,13 @@ def ecn_check(answers):
 
   return mark_dict, supported
 
-def l4s_check(answers):
-  # As per spec, "The identifier for packets using the Low Latency, Low Loss, Scalable throughput (L4S) service SHOULD be visible at the IP layer;"
+def ecn_ip_check(answers):
+    """Performs traceroute
+    but also sets IP ToS/ECN
+    flags in ping s.t. hosts
+    should return back
+    ECN readiness
+    """
   mark_dict = {}
   supported = []
   count = 0
@@ -248,8 +269,60 @@ def l4s_check(answers):
 
   return mark_dict, supported
 
-def traceroute(target, dport=80, minttl=1, maxttl=30, sport=RandShort(), l4=None, filter=None, timeout=2, verbose=None, ecn=0, l4s=0, **kargs):  # noqa: E501
-  """Instant TCP traceroute
+def accEcn_tcp_check(answers):
+    """Performs traceroute
+    but also sets TCP flags
+    in ping s.t. hosts
+    should return back
+    L4S readiness
+    (IN-PROGRESS)
+    """
+  mark_dict = {}
+  supported = []
+  count = 0
+  for hop in answers:
+    request = hop.query
+    response = hop.answer # Class IP
+    response_payload = response.payload
+    try:
+      host = socket.gethostbyaddr(response.src)[0]
+    except:
+      host = response.src
+    # Check if router bleached ECN bits, and update times this router has been pinged/bleach count
+      # [num. times pinged, num. preservations of ecn bits]
+    if type(response_payload) != TCP:
+      if response.src in mark_dict:
+        mark_dict[response.src][0] += 1
+        mark_dict[response.src][1] += 0
+      else:
+        mark_dict[response.src] = [1, 0]
+      print("{}\t{} ({}) {} ms, tos={}, ecn={}".format(count, host, response.src, '%.3f'%((response.time - request.sent_time)*1000), str(f"{response.tos:b}"), str(f"{response.tos & 0x3:b}")))
+    # Is TCP packet, check if flags and IP fields are set:
+    else:
+      # If not bleached
+      # TODO: As per spec, "The identifier for packets using the Low Latency, Low Loss, Scalable throughput (L4S) service SHOULD be visible at the IP layer;"
+        # Does this mean also need to check IP header ECN bits? (i.e. ecn_ip_check conditional)
+      if response_payload.flags == "SANE" or response_payload.flags == "ANE" or response_payload.flags == "AE" or response_payload.flags == "E":
+        if response.src in mark_dict:
+          mark_dict[response.src][0] += 1
+          mark_dict[response.src][1] += 1
+        else:
+          mark_dict[response.src] = [1, 1]
+        supported.append((host, response.src))
+      else:
+        if response.src in mark_dict:
+          mark_dict[response.src][0] += 1
+          mark_dict[response.src][1] += 0
+        else:
+          mark_dict[response.src] = [1, 0]
+      print("{}\t{} ({}) {} ms, tos={}, ecn={}, tcp_flags={}".format(count, host, response.src, '%.3f'%((response.time - request.sent_time)*1000), str(f"{response.tos:b}"), str(f"{response.tos & 0x3:b}"), str(response_payload.flags)))
+    count += 1
+
+  return mark_dict, supported
+
+def traceroute(target, dport=80, minttl=1, maxttl=30, sport=RandShort(), l4=None, filter=None, timeout=2, verbose=None, ecn=0, l4s=0, accEcn=0, **kargs):  # noqa: E501
+  """Driver for above tailored traceroutes
+     Instant TCP traceroute
      :param target:  hostnames or IP addresses
      :param dport:   TCP destination port (default is 80)
      :param minttl:  minimum TTL (default is 1)
@@ -289,6 +362,9 @@ def traceroute(target, dport=80, minttl=1, maxttl=30, sport=RandShort(), l4=None
     # set tos=2 to represent a sender that wishes a packet to receive L4S treatment (https://datatracker.ietf.org/doc/html/draft-ietf-tsvwg-ecn-l4s-id#section-4.1)
     a, b = sr(IP(dst=target, id=RandShort(), ttl=(minttl, maxttl), tos=2) / TCP(seq=RandInt(), sport=sport, dport=dport, flags='SEC'),  # noqa: E501
           timeout=timeout, filter=filter, verbose=verbose, **kargs)
+    if accEcn:
+      a, b = sr(IP(dst=target, id=RandShort(), ttl=(minttl, maxttl), tos=2) / TCP(seq=RandInt(), sport=sport, dport=dport, flags='SNEC'),  # noqa: E501
+          timeout=timeout, filter=filter, verbose=verbose, **kargs)
   else:
     # this should always work
     filter = "ip"
@@ -296,9 +372,11 @@ def traceroute(target, dport=80, minttl=1, maxttl=30, sport=RandShort(), l4=None
           timeout=timeout, filter=filter, verbose=verbose, **kargs)
 
   if l4s:
-    mark_dict, supported = l4s_check(a)
+    mark_dict, supported = ecn_ip_check(a)
   elif ecn:
-    mark_dict, supported = ecn_check(a)
+    mark_dict, supported = ecn_tcp_check(a)
+  elif accEcn:
+    mark_dict, supported = accEcn_tcp_check(a)
 
   a = TracerouteResult(a.res)
   if verbose:
@@ -308,7 +386,7 @@ def traceroute(target, dport=80, minttl=1, maxttl=30, sport=RandShort(), l4=None
 def main():
   sites =  ["live.com" ,"taobao.com" ,"msn.com" ,"sina.com.cn" ,"yahoo.co.jp" ,"google.co.jp" ,"linkedin.com" ,"weibo.com" ,"bing.com" ,"yandex.ru" ,"vk.com"]
   # sites = "yandex.ru"
-  res, unans, mark_dict, supported = traceroute(sites,dport=80,maxttl=20,retry=-2,verbose=0, ecn=1) #: verbosity, from 0 (almost mute) to 3 (verbose)
+  res, unans, mark_dict, supported = traceroute(sites,dport=80,maxttl=20,retry=-2,verbose=0,accEcn=1) #: verbosity, from 0 (almost mute) to 3 (verbose)
   s = mod_graph(res, mark_dict)
   do_graph(s, target="> /Users/andrewcchu/Documents/GitHub/l4s/figs/graph_multi_ecn.svg")
 
