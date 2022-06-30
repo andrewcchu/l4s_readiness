@@ -1,3 +1,4 @@
+import time
 import socket
 import logging
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR) # Suppress interface warnings
@@ -9,13 +10,13 @@ from scapy.layers.inet import TracerouteResult, IP, TCP, ICMP
 from scapy.layers.inet6 import IPv6, ICMPv6TimeExceeded
 
 def node_colgen(bleach_tuple):
-    """Generate lighter shades of
-    green for nodes based on num.
-    of affirmative responses
-    returned for respective
-    check (i.e., ecn_ip, ecn_tcp,
-    l4s_tcp)
-    """
+  """Generate lighter shades of
+  green for nodes based on num.
+  of affirmative responses
+  returned for respective
+  check (i.e., ecn_ip, ecn_tcp,
+  l4s_tcp)
+  """
   total = bleach_tuple[0]
   preserve = bleach_tuple[1]
   step_size = total
@@ -31,9 +32,9 @@ def node_colgen(bleach_tuple):
   return '#%02x%02x%02x' % tuple(new_rgb_int)
 
 def mod_graph(tr_res, mark_dict):
-    """ Graph traceroute
-    using graphviz
-    """
+  """ Graph traceroute
+  using graphviz
+  """
   ASres = conf.AS_resolver
   padding = 0
   ips = {}
@@ -184,12 +185,12 @@ def mod_graph(tr_res, mark_dict):
   return s
 
 def ecn_tcp_check(answers):
-    """Performs traceroute
-    but also sets TCP flags
-    in ping s.t. hosts
-    should return back
-    ECN readiness
-    """
+  """Performs traceroute
+  but also sets TCP flags
+  in ping s.t. hosts
+  should return back
+  ECN readiness
+  """
   mark_dict = {}
   supported = []
   count = 0
@@ -232,12 +233,12 @@ def ecn_tcp_check(answers):
   return mark_dict, supported
 
 def ecn_ip_check(answers):
-    """Performs traceroute
-    but also sets IP ToS/ECN
-    flags in ping s.t. hosts
-    should return back
-    ECN readiness
-    """
+  """Performs traceroute
+  but also sets IP ToS/ECN
+  flags in ping s.t. hosts
+  should return back
+  ECN readiness
+  """
   mark_dict = {}
   supported = []
   count = 0
@@ -270,13 +271,13 @@ def ecn_ip_check(answers):
   return mark_dict, supported
 
 def accEcn_tcp_check(answers):
-    """Performs traceroute
-    but also sets TCP flags
-    in ping s.t. hosts
-    should return back
-    L4S readiness
-    (IN-PROGRESS)
-    """
+  """Performs traceroute
+  but also sets TCP flags
+  in ping s.t. hosts
+  should return back
+  L4S readiness
+  (IN-PROGRESS)
+  """
   mark_dict = {}
   supported = []
   count = 0
@@ -380,12 +381,49 @@ def traceroute(target, dport=80, minttl=1, maxttl=30, sport=RandShort(), l4=None
 
   a = TracerouteResult(a.res)
   if verbose:
-      a.show()
+    a.show()
   return a, b, mark_dict, list(set(supported))
 
+def parse_answer(answers):
+  tsvaltmp = 0
+  tsecrtmp = 0
+  tcp_count = 0
+  for pkt in answers:
+    print(pkt)
+    response = pkt.answer # Class IP
+    response_payload = response.payload
+    if type(response_payload) != TCP:
+      continue
+    opt_data = dict(response_payload.options)
+    try:
+      tsvalpkt = opt_data['Timestamp'][0]
+      tsecrpkt = opt_data['Timestamp'][1]
+    except:
+      continue
+    if tsvaltmp == tsecrpkt:
+     rtt = tsvalpkt - tsecrtmp
+     if rtt != 0 and tsecrtmp != 0:
+       print(rtt)
+    tsvaltmp = tsvalpkt
+    tsecrtmp = tsecrpkt
+    tcp_count += 1
+  return tcp_count
+
+def send_measure_probe(addr, ecn):
+  filter = "(icmp and (icmp[0]=3 or icmp[0]=4 or icmp[0]=5 or icmp[0]=11 or icmp[0]=12)) or (tcp and (tcp[13] & 0x16 > 0x10))"  # noqa: E501
+  if ecn:
+    a, b = sr(IP(dst=addr, id=RandShort(), ttl=(1, 20), tos=2) / TCP(seq=RandInt(), sport=RandShort(), dport=80, flags='SEC', options=[('Timestamp', (int(time.time()), 0))]),  # noqa: E501
+          timeout=2, filter=filter, verbose=0)
+    tcp_count = parse_answer(a)
+  else:
+    a, b = sr(IP(dst=addr, id=RandShort(), ttl=(1, 20), tos=0) / TCP(seq=RandInt(), sport=RandShort(), dport=80, options=[('Timestamp', (int(time.time()), 0))]),
+            timeout=2, filter=filter, verbose=0)
+    tcp_count = parse_answer(a)
+  return tcp_count
+
 def main():
-  sites =  ["live.com" ,"taobao.com" ,"msn.com" ,"sina.com.cn" ,"yahoo.co.jp" ,"google.co.jp" ,"linkedin.com" ,"weibo.com" ,"bing.com" ,"yandex.ru" ,"vk.com"]
-  # sites = "yandex.ru"
+  # sites =  ["live.com" ,"taobao.com" ,"msn.com" ,"sina.com.cn" ,"yahoo.co.jp" ,"google.co.jp" ,"linkedin.com" ,"weibo.com" ,"bing.com" ,"yandex.ru" ,"vk.com"]
+  sites = ["linkedin.com"]
   # Change last arg to ecn_tcp, ecn_ip, or accEcn
   res, unans, mark_dict, supported = traceroute(sites,dport=80,maxttl=20,retry=-2,verbose=0,ecn_tcp=1) #: verbosity, from 0 (almost mute) to 3 (verbose)
   s = mod_graph(res, mark_dict)
@@ -395,5 +433,19 @@ def main():
   print("\nHosts supporting ECN: ")
   for s in supported:
     print("{} ({}): {}/{} responses containing ECN flags".format(s[0], s[1], mark_dict[s[1]][1], mark_dict[s[1]][0]))
+
+# Measurements:
+  for s in supported:
+    x = 0
+    addr = s[1]
+    print("Measuring ECN RTT to {} over 1000 sends...".format(addr))
+    while x < 1000:
+      x += send_measure_probe(addr, 1)
+
+    x = 0
+
+    print("Measuring Classic RTT to {} over 1000 sends...".format(addr))
+    while x < 1000:
+      x += send_measure_probe(addr, 0)
 
 main()
