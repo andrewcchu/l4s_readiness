@@ -10,6 +10,7 @@ from scapy.volatile import RandShort, RandInt
 from scapy.layers.inet import TracerouteResult, IP, TCP, ICMP, UDP
 from scapy.layers.inet6 import IPv6, ICMPv6TimeExceeded
 import sys
+import argparse
 
 def node_colgen(bleach_tuple):
   """Generate lighter shades of
@@ -424,37 +425,43 @@ def send_measure_probe(addr, ecn):
   return tcp_count
 
 def main():
+  parser = argparse.ArgumentParser(description='default')
+  #parser.add_argument('-g', '--graphing', action='store_true',default = False)
   # sites =  ["live.com" ,"taobao.com" ,"msn.com" ,"sina.com.cn" ,"yahoo.co.jp" ,"google.co.jp" ,"linkedin.com" ,"weibo.com" ,"bing.com" ,"yandex.ru" ,"vk.com"]
-  try:
-    fig_path = "> " + sys.argv[1]
-  except:
-    #dafault
-      fig_path = "> /Users/andrewcchu/Documents/GitHub/l4s/figs/graph_multi_ecn.svg"
-  print(fig_path)
+  #print(args)
+  parser.add_argument('-p', '--path', help='Path to store fig.', default = "/Users/andrewcchu/Documents/GitHub/l4s/figs/graph_multi_ecn.svg")
+  parser.add_argument('-t', '--trace', help='Option to trace route.',action='store_true', default = False)
+  parser.add_argument('-m', '--measure', help='Option to measurements.',action='store_true', default = False)
+
+  args = parser.parse_args()
+
+  fig_path = "> " + args.path
 
   sites = ["linkedin.com"]
-  # Change last arg to ecn_tcp, ecn_ip, or accEcn
-  res, unans, mark_dict, supported = traceroute(sites,dport=80,maxttl=20,retry=-2,verbose=0,ecn_tcp=1) #: verbosity, from 0 (almost mute) to 3 (verbose)
-  s = mod_graph(res, mark_dict)
-  # Change this path to save location
-  do_graph(s, target=fig_path)
+  if args.trace:
+    # Change last arg to ecn_tcp, ecn_ip, or accEcn
+    res, unans, mark_dict, supported = traceroute(sites,dport=80,maxttl=20,retry=-2,verbose=0,ecn_tcp=1) #: verbosity, from 0 (almost mute) to 3 (verbose)
+    s = mod_graph(res, mark_dict)
+    # Change this path to save location
+    do_graph(s, target=fig_path)
 
-  print("\nHosts supporting ECN: ")
-  for s in supported:
-    print("{} ({}): {}/{} responses containing ECN flags".format(s[0], s[1], mark_dict[s[1]][1], mark_dict[s[1]][0]))
+    print("\nHosts supporting ECN: ")
+    for s in supported:
+      print("{} ({}): {}/{} responses containing ECN flags".format(s[0], s[1], mark_dict[s[1]][1], mark_dict[s[1]][0]))
 
 # Measurements:
-  for s in supported:
-    x = 0
-    addr = s[1]
-    print("Measuring ECN RTT to {} over 1000 sends...".format(addr))
-    while x < 1000:
-      x += send_measure_probe(addr, 1)
+  if args.measure:
+    for s in supported:
+      x = 0
+      addr = s[1]
+      print("Measuring ECN RTT to {} over 1000 sends...".format(addr))
+      while x < 1000:
+        x += send_measure_probe(addr, 1)
 
-    x = 0
+      x = 0
 
-    print("Measuring Classic RTT to {} over 1000 sends...".format(addr))
-    while x < 1000:
-      x += send_measure_probe(addr, 0)
+      print("Measuring Classic RTT to {} over 1000 sends...".format(addr))
+      while x < 1000:
+        x += send_measure_probe(addr, 0)
 
 main()
