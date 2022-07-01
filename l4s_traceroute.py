@@ -7,7 +7,7 @@ from scapy.config import conf
 from scapy.sendrecv import sr
 from scapy.utils import do_graph, incremental_label, colgen
 from scapy.volatile import RandShort, RandInt
-from scapy.layers.inet import TracerouteResult, IP, TCP, ICMP
+from scapy.layers.inet import TracerouteResult, IP, TCP, ICMP, UDP
 from scapy.layers.inet6 import IPv6, ICMPv6TimeExceeded
 import sys
 
