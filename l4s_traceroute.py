@@ -463,5 +463,4 @@ def main():
       print("Measuring Classic RTT to {} over 1000 sends...".format(addr))
       while x < 1000:
         x += send_measure_probe(addr, 0)
-
 main()
