@@ -2,12 +2,14 @@ import time
 import socket
 import logging
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR) # Suppress interface warnings
+from scapy.all import *
 from scapy.config import conf
 from scapy.sendrecv import sr
 from scapy.utils import do_graph, incremental_label, colgen
 from scapy.volatile import RandShort, RandInt
 from scapy.layers.inet import TracerouteResult, IP, TCP, ICMP
 from scapy.layers.inet6 import IPv6, ICMPv6TimeExceeded
+import sys
 
 def node_colgen(bleach_tuple):
   """Generate lighter shades of
@@ -423,12 +425,19 @@ def send_measure_probe(addr, ecn):
 
 def main():
   # sites =  ["live.com" ,"taobao.com" ,"msn.com" ,"sina.com.cn" ,"yahoo.co.jp" ,"google.co.jp" ,"linkedin.com" ,"weibo.com" ,"bing.com" ,"yandex.ru" ,"vk.com"]
+  try:
+    fig_path = "> " + sys.argv[1]
+  except:
+    #dafault
+      fig_path = "> /Users/andrewcchu/Documents/GitHub/l4s/figs/graph_multi_ecn.svg"
+  print(fig_path)
+
   sites = ["linkedin.com"]
   # Change last arg to ecn_tcp, ecn_ip, or accEcn
   res, unans, mark_dict, supported = traceroute(sites,dport=80,maxttl=20,retry=-2,verbose=0,ecn_tcp=1) #: verbosity, from 0 (almost mute) to 3 (verbose)
   s = mod_graph(res, mark_dict)
   # Change this path to save location
-  do_graph(s, target="> /Users/andrewcchu/Documents/GitHub/l4s/figs/graph_multi_ecn.svg")
+  do_graph(s, target=fig_path)
 
   print("\nHosts supporting ECN: ")
   for s in supported:
