@@ -4,7 +4,7 @@ import (
   "syscall"
   "fmt"
   "log"
-  "net"
+  // "net"
   "github.com/google/gopacket"
   "github.com/google/gopacket/layers"
 )
@@ -36,24 +36,24 @@ func main() {
   // If TCP packet, modify fields to be correct receiving response L4S flags, and forward back to source
   if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
     ip, _ := packet.Layer(layers.LayerTypeIPv4).(*layers.IPv4)
-    eth, _ := packet.Layer(layers.LayerTypeEthernet).(*layers.Ethernet)
+    // eth, _ := packet.Layer(layers.LayerTypeEthernet).(*layers.Ethernet)
     // If DSCP not set, support L4S
     if ip.TOS == 0 {
       ip.TOS = 1
     }
     // Below, messing around with setting header fields to different values
-    ip.SrcIP = ip.DstIP
-    ip.DstIP = net.IPv4(10, 150, 111, 252)
-    eth.SrcMAC = eth.DstMAC
-    eth.DstMAC = net.HardwareAddr{0xf4, 0x5c, 0x89, 0xba, 0xe6, 0x63}
+    // ip.SrcIP = ip.DstIP
+    // ip.DstIP = net.IPv4(10, 150, 111, 252)
+    // eth.SrcMAC = eth.DstMAC
+    // eth.DstMAC = net.HardwareAddr{0xf4, 0x5c, 0x89, 0xba, 0xe6, 0x63}
     tcp, _ := tcpLayer.(*layers.TCP)
-    tcp.DstPort = 9090
+    // tcp.DstPort = 9090
     tcp.NS = true
     tcp.CWR = true
     tcp.ECE = true
-    tcp.SYN = true
-    tcp.ACK = false
-    tcp.PSH = false
+    // tcp.SYN = true
+    // tcp.ACK = false
+    // tcp.PSH = false
 
     // Craft modified packet to forward w/ SerializePacket
     sndBuff := gopacket.NewSerializeBuffer()
@@ -66,9 +66,9 @@ func main() {
 
     // Convert packet into raw bytes
     sndPkt := sndBuff.Bytes()
-    // hex := fmt.Sprintf("%x", sndPkt)
-    // fmt.Println(sndPkt)
-    // fmt.Println(hex)
+    hex := fmt.Sprintf("%x", sndPkt)
+    fmt.Println(sndPkt)
+    fmt.Println(hex)
 
     // Below: Sanity check converting raw bytes into packet and printing
     mod_packet := gopacket.NewPacket(sndPkt, layers.LayerTypeEthernet, gopacket.Default)
@@ -77,11 +77,10 @@ func main() {
     // Setting up socket and sending
     fd, _ := syscall.Socket(syscall.AF_INET, syscall.SOCK_RAW, syscall.IPPROTO_RAW)
     addr := syscall.SockaddrInet4{
-      // Port: int(tcp.DstPort),
-      Port: 9090,
-      // Addr: [4]byte{ip.DstIP[0], ip.DstIP[1], ip.DstIP[2], ip.DstIP[3]}, // TODO: This line *should* be the one used in deployment
+      Port: int(tcp.DstPort),
+      // Port: 9090,
+      Addr: [4]byte{ip.DstIP[0], ip.DstIP[1], ip.DstIP[2], ip.DstIP[3]}, // TODO: This line *should* be the one used in deployment
       // Addr: [4]byte{128, 135, 98, 173},
-      Addr: [4]byte{10, 150, 111, 252},
     }
     err = syscall.Sendto(fd, sndPkt, 0, &addr)
     if err != nil {
